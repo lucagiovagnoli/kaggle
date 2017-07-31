@@ -1,0 +1,6 @@
+*.py[co]
+*.so
+*.sw[nop]
+.DS_Store
+venv/
+
