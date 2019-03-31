@@ -1,3 +1,4 @@
+kaggle
 ipdb
 matplotlib
 numpy
@@ -5,3 +6,4 @@ pandas
 pydotplus
 scikit-learn
 scipy
+xgboost
