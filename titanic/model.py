@@ -62,7 +62,7 @@ CROSS_VALIDATION_K_FOLDS = 5
 
 
 def write_solution(trained_model):
-    dataset = pandas.read_csv('test.csv')
+    dataset = pandas.read_csv('data/test.csv')
     test_set = preproc(dataset)
 
     predictions = trained_model.predict(test_set)
@@ -71,7 +71,7 @@ def write_solution(trained_model):
     result['PassengerId'] = dataset.index
     result.set_index('PassengerId', inplace=True)
 
-    result.to_csv('my_answer.csv')
+    result.to_csv('data/my_answer.csv')
 
 
 def preproc(dataset):
@@ -111,7 +111,7 @@ def train_decision_tree(train_set, targets):
     # Generate graphical representation of a decision tree
     dot_data = tree.export_graphviz(trained_model, out_file=None, feature_names=train_set.columns)
     graph = pydotplus.graph_from_dot_data(dot_data)
-    graph.write_pdf("decision_tree.pdf")
+    graph.write_pdf("data/decision_tree.pdf")
 
     return trained_model
 
@@ -178,7 +178,7 @@ def XGBoost_training(train_set, targets):
 
 
 if __name__ == '__main__':
-    dataset = pandas.read_csv('train.csv')
+    dataset = pandas.read_csv('data/train.csv')
     targets = dataset['Survived']
 
     train_set = preproc(dataset.drop('Survived', axis=1))
