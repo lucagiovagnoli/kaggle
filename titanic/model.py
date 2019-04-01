@@ -3,7 +3,7 @@ Some personal notes
 ========================
 
 
-'Sex' seems to be the best predictor for survival on the titanic.
+Gender seems to be the best predictor for survival on the titanic.
 
 **Features correlation**
 ========================
@@ -25,13 +25,27 @@ Fare   -0.549500 -0.182333  0.091566  0.159651  0.216225  1.000000
 **HPT**
 ========================
 
-Input:
+Gradient Boosting Input:
     'learning_rate':[0.15,0.1,0.05,0.01,0.005,0.001],
     'n_estimators':[100,250,500,750,1000,1250,1500,1750],
     'max_depth': list(range(3, 10)),
 
 Best params: {'learning_rate': 0.05, 'max_depth': 3, 'n_estimators': 500}
 
+
+XGBoost
+-------
+
+Feature importances: [
+('Pclass', 0.1814381),
+('Sex', 0.6286483),
+('Age', 0.02732801),
+('SibSp', 0.05935158),
+('Parch', 0.012525526),
+('Fare', 0.028575614),
+('x0_C', 0.016267084),
+('x0_Q', 0.013576938),
+('x0_S', 0.03228884,)] 
 
 """
 
@@ -44,8 +58,10 @@ import pydotplus
 
 from sklearn import tree
 from sklearn import preprocessing
+from sklearn.impute import SimpleImputer
 from sklearn.metrics import roc_curve
 from sklearn.metrics import roc_auc_score
+from sklearn.metrics import precision_recall_curve
 from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import KFold
@@ -55,15 +71,17 @@ from xgboost import XGBRegressor
 from xgboost import XGBClassifier
 from sklearn.base import clone
 
+from my_plotting import plot_precision_recall
+
 
 columns = ['PassengerId', 'Survived', 'Pclass', 'Name', 'Sex', 'Age', 'SibSp', 'Parch', 'Ticket', 'Fare', 'Cabin', 'Embarked']
-COLUMNS_TO_DROP = ['Name', 'Ticket', 'Cabin', 'Embarked']
+COLUMNS_TO_DROP = ['Name', 'Ticket', 'Cabin'] #, 'Embarked']
 CROSS_VALIDATION_K_FOLDS = 5
 
 
 def write_solution(trained_model):
     dataset = pandas.read_csv('data/test.csv')
-    test_set = preproc(dataset)
+    test_set, _ = preproc(dataset)
 
     predictions = trained_model.predict(test_set)
 
@@ -81,14 +99,34 @@ def preproc(dataset):
     dataset.set_index('PassengerId', inplace=True)
     dataset.drop(COLUMNS_TO_DROP, axis=1, inplace=True)
 
+    # Imputation
     dataset['Age'].fillna(dataset['Age'].mean(), inplace=True)
     dataset['Fare'].fillna(dataset['Fare'].mean(), inplace=True)
+
+    str_imputer = SimpleImputer(strategy='most_frequent')
+    embarked = str_imputer.fit(dataset[['Embarked']]).transform(dataset[['Embarked']])
+    dataset['Embarked'] = embarked
+
+    ### CATEGORICAL DATA
 
     # Sex to {0,1}
     label_binarizer = preprocessing.LabelBinarizer().fit(dataset['Sex'])
     dataset['Sex'] = label_binarizer.transform(dataset['Sex'])
 
-    return dataset
+    # Embarked to One Hot Encoding
+    encoder = preprocessing.OneHotEncoder()
+    encoder.fit(dataset[['Embarked']])
+
+    one_hot_encoded = encoder.transform(dataset[['Embarked']]).toarray()
+    dataset[encoder.get_feature_names()] = pandas.DataFrame(one_hot_encoded, index=dataset.index)
+    dataset.drop('Embarked', axis=1, inplace=True)
+
+    targets = None
+    if 'Survived' in dataset:
+        targets = dataset['Survived']
+        dataset.drop('Survived', axis=1, inplace=True)
+
+    return dataset, targets
 
 
 def _scores_mean_accuracy(scores, clf_name):
@@ -141,13 +179,14 @@ def train_model(train_set, targets):
 
 def XGBoost_training(train_set, targets):
     """
-    Manual Cross Validation
+    XGBoost training with 'manual' Cross Validation
     """
-    kfold = KFold(n_splits=5)
+    kfold = KFold(n_splits=CROSS_VALIDATION_K_FOLDS)
 
     classifier = XGBClassifier(
-        n_estimators=500,
-        learning_rate=0.05,
+        n_estimators=250,
+        learning_rate=0.025,
+        max_depth=5,
     )
 
     cv_scores = []
@@ -160,13 +199,19 @@ def XGBoost_training(train_set, targets):
             # evaluate `stopping` over the left out test Fold
             # eval_set=[train_set.iloc[test_fold_ixs], targets.iloc[test_fold_ixs]],
         ) 
-        predictions = trained_model.predict(train_set.iloc[test_fold_ixs])
         cv_scores.append(
             trained_model.score(
                 train_set.iloc[test_fold_ixs],
                 targets.iloc[test_fold_ixs],
             )
         )
+
+        probas = trained_model.predict_proba(train_set.iloc[test_fold_ixs])
+        precision, recall, thresholds = precision_recall_curve(
+            targets.iloc[test_fold_ixs],
+            probas[:, 1],
+        )
+        plot_precision_recall(recall, precision)
 
     cv_scores = numpy.array(cv_scores)
     print(_scores_mean_accuracy(cv_scores, 'XGBoost'))
@@ -179,11 +224,16 @@ def XGBoost_training(train_set, targets):
 
 if __name__ == '__main__':
     dataset = pandas.read_csv('data/train.csv')
-    targets = dataset['Survived']
+    # targets = dataset['Survived']
 
-    train_set = preproc(dataset.drop('Survived', axis=1))
+    train_set, targets = preproc(dataset)
 
     trained_gradien_boosting_model = train_model(train_set, targets)
     trained_xgboost_model = XGBoost_training(train_set, targets)
+
+    print("Feature importances: " + str(list(zip(
+        train_set.columns.to_list(),
+        trained_xgboost_model.feature_importances_
+    ))))
 
     write_solution(trained_xgboost_model)

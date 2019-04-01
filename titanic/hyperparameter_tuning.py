@@ -44,9 +44,9 @@ def hpt_gradient_boosting(X_train, y_train):
 def hpt_xgboost(X_train, y_train):
     """  """
     param_grid = {
-        'learning_rate':[0.15,0.1,0.05,0.01],
+        'learning_rate':[0.1,0.75,0.05,0.025,0.01],
         'n_estimators':[100,250,500,750,1000],
-        'max_depth': list(range(3, 7)),
+        'max_depth': list(range(3, 8)),
     }
 
     classifier = XGBClassifier()
@@ -54,10 +54,9 @@ def hpt_xgboost(X_train, y_train):
 
 
 if __name__ == '__main__':
-    dataset = pandas.read_csv('train.csv')
-    targets = dataset['Survived']
+    dataset = pandas.read_csv('data/train.csv')
 
-    train_set = preproc(dataset.drop('Survived', axis=1))
+    train_set, targets = preproc(dataset)
 
     # tuning_result = hpt_gradient_boosting()
     tuning_result = hpt_xgboost(train_set, targets)
