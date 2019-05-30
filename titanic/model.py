@@ -55,7 +55,13 @@ import matplotlib.pyplot as plt
 import numpy
 import pandas
 import pydotplus
+import random
+import yaml
 
+
+import mlflow
+import mlflow.sklearn
+from contextlib import contextmanager
 from sklearn import tree
 from sklearn import preprocessing
 from sklearn.impute import SimpleImputer
@@ -72,6 +78,7 @@ from xgboost import XGBClassifier
 from sklearn.base import clone
 
 from my_plotting import plot_precision_recall
+from my_plotting import plot_precision_recall_from_model
 
 
 columns = ['PassengerId', 'Survived', 'Pclass', 'Name', 'Sex', 'Age', 'SibSp', 'Parch', 'Ticket', 'Fare', 'Cabin', 'Embarked']
@@ -130,6 +137,7 @@ def preproc(dataset):
 
 
 def _scores_mean_accuracy(scores, clf_name):
+    mlflow.log_metric('cv_mean_accuracy', scores.mean())
     return f"[{clf_name}] CV Accuracy: %0.2f (+/- %0.2f)" % (scores.mean(), scores.std() * 2)
 
 
@@ -150,6 +158,7 @@ def train_decision_tree(train_set, targets):
     dot_data = tree.export_graphviz(trained_model, out_file=None, feature_names=train_set.columns)
     graph = pydotplus.graph_from_dot_data(dot_data)
     graph.write_pdf("data/decision_tree.pdf")
+    mlflow.log_artifact('data/decision_tree.pdf')
 
     return trained_model
 
@@ -181,16 +190,26 @@ def XGBoost_training(train_set, targets):
     """
     XGBoost training with 'manual' Cross Validation
     """
+    N_ESTIMATORS = 280
+    LEARNING_RATE = 0.025
+    MAX_DEPTH=5
+
+    mlflow.log_param('model_type', 'XGBoost')
+    mlflow.log_param('CROSS_VALIDATION_K_FOLDS', CROSS_VALIDATION_K_FOLDS)
+    mlflow.log_param('N_ESTIMATORS', N_ESTIMATORS)
+    mlflow.log_param('LEARNING_RATE', LEARNING_RATE)
+    mlflow.log_param('MAX_DEPTH', MAX_DEPTH)
+
     kfold = KFold(n_splits=CROSS_VALIDATION_K_FOLDS)
 
     classifier = XGBClassifier(
-        n_estimators=250,
-        learning_rate=0.025,
-        max_depth=5,
+        n_estimators=N_ESTIMATORS,
+        learning_rate=LEARNING_RATE,
+        max_depth=MAX_DEPTH,
     )
 
     cv_scores = []
-    for train_fold_ixs, test_fold_ixs in kfold.split(train_set):
+    for (fold_n, (train_fold_ixs, test_fold_ixs)) in enumerate(kfold.split(train_set)):
 
         trained_model = clone(classifier).fit(
             train_set.iloc[train_fold_ixs],
@@ -206,12 +225,13 @@ def XGBoost_training(train_set, targets):
             )
         )
 
-        probas = trained_model.predict_proba(train_set.iloc[test_fold_ixs])
-        precision, recall, thresholds = precision_recall_curve(
+        plot_precision_recall_from_model(
+            trained_model,
+            train_set.iloc[test_fold_ixs],
             targets.iloc[test_fold_ixs],
-            probas[:, 1],
+            False,
+            'data/precision_recall_cvfold_{}.png'.format(fold_n),
         )
-        plot_precision_recall(recall, precision)
 
     cv_scores = numpy.array(cv_scores)
     print(_scores_mean_accuracy(cv_scores, 'XGBoost'))
@@ -219,21 +239,44 @@ def XGBoost_training(train_set, targets):
     # clone again for readability
     final_model = clone(classifier).fit(train_set, targets)
 
+    plot_precision_recall_from_model(final_model, train_set, targets, 'data/precision_recall.png')
+    mlflow.log_artifact('data/precision_recall.png')
+
     return final_model
+
+@contextmanager
+def setup_mlflow():
+    mlflow.set_tracking_uri('http://localhost:5000')
+    mlflow.set_experiment('Titanic')
+
+    random_hash = random.getrandbits(128)
+    with mlflow.start_run(run_name=str(random_hash)):
+        yield
 
 
 if __name__ == '__main__':
-    dataset = pandas.read_csv('data/train.csv')
-    # targets = dataset['Survived']
+    with setup_mlflow():
+        dataset = pandas.read_csv('data/train.csv')
+        # targets = dataset['Survived']
 
-    train_set, targets = preproc(dataset)
+        train_set, targets = preproc(dataset)
 
-    trained_gradien_boosting_model = train_model(train_set, targets)
-    trained_xgboost_model = XGBoost_training(train_set, targets)
+        # trained_gradien_boosting_model = train_model(train_set, targets)
+        trained_xgboost_model = XGBoost_training(train_set, targets)
 
-    print("Feature importances: " + str(list(zip(
-        train_set.columns.to_list(),
-        trained_xgboost_model.feature_importances_
-    ))))
+        mlflow.sklearn.log_model(trained_xgboost_model, 'titanic_model')
 
-    write_solution(trained_xgboost_model)
+        with open('feature_importances.yaml', 'w') as feat_imp_file:
+            yaml.safe_dump(dict(zip(
+                train_set.columns.to_list(),
+                map(str, trained_xgboost_model.feature_importances_),
+            )), feat_imp_file)
+
+        mlflow.log_artifact('feature_importances.yaml')
+
+        print("Feature importances: " + str(list(zip(
+            train_set.columns.to_list(),
+            trained_xgboost_model.feature_importances_
+        ))))
+
+        write_solution(trained_xgboost_model)
